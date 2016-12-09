@@ -204,12 +204,12 @@ class JavaConverters {
 
         @Override
         public ListIterator<T> listIterator() {
-            return ListIterator.of(getDelegate(), 0, isMutable());
+            return new ListIterator<>(this, 0);
         }
 
         @Override
         public ListIterator<T> listIterator(int index) {
-            return ListIterator.of(getDelegate(), index, isMutable());
+            return new ListIterator<>(this, index);
         }
 
         @Override
@@ -314,25 +314,21 @@ class JavaConverters {
             return setDelegate(delegate).get(index);
         }
 
-        private static class ListIterator<T> extends HasDelegate<IndexedSeq<T>> implements java.util.ListIterator<T> {
+        // DEV-Note: An iterator is intentionally not serializable.
+        private static class ListIterator<T> implements java.util.ListIterator<T> {
 
-            private static final long serialVersionUID = 1L;
-
+            private ListView<T> list;
             private int index;
+            private boolean dirty = true;
 
-            static <T> ListIterator<T> of(Seq<T> seq, int index, boolean mutable) {
-                final IndexedSeq<T> indexedSeq = (seq instanceof IndexedSeq) ? (IndexedSeq<T>) seq : seq.toVector();
-                return new ListIterator<>(indexedSeq, index, mutable);
-            }
-
-            ListIterator(IndexedSeq<T> delegate, int index, boolean mutable) {
-                super(delegate, mutable);
+            ListIterator(ListView<T> list, int index) {
+                this.list = list;
                 this.index = index;
             }
 
             @Override
             public boolean hasNext() {
-                return index < getDelegate().length();
+                return index < list.size();
             }
 
             @Override
@@ -340,7 +336,8 @@ class JavaConverters {
                 if (!hasNext()) {
                     throw new NoSuchElementException();
                 }
-                return getDelegate().get(index++);
+                dirty = false;
+                return list.get(index++);
             }
 
             @Override
@@ -358,7 +355,8 @@ class JavaConverters {
                 if (!hasPrevious()) {
                     throw new NoSuchElementException();
                 }
-                return getDelegate().get(--index);
+                dirty = false;
+                return list.get(--index);
             }
 
             @Override
@@ -368,39 +366,37 @@ class JavaConverters {
 
             @Override
             public void remove() {
-                /* TODO:
-                 * @throws IllegalStateException if neither {@code next} nor
-                 *         {@code previous} have been called, or {@code remove} or
-                 *         {@code add} have been called after the last call to
-                 *         {@code next} or {@code previous}
-                 */
-                setDelegate(getDelegate().removeAt(index));
+                checkDirty();
+                // may throw a ClassCastException accordingly to j.u.ListIterator.remove()
+                list.remove(index);
+                dirty = true;
             }
 
             @Override
             public void set(T value) {
-                /* TODO:
-                 * @throws ClassCastException if the class of the specified element
-                 *         prevents it from being added to this list
-                 * @throws IllegalArgumentException if some aspect of the specified
-                 *         element prevents it from being added to this list
-                 * @throws IllegalStateException if neither {@code next} nor
-                 *         {@code previous} have been called, or {@code remove} or
-                 *         {@code add} have been called after the last call to
-                 *         {@code next} or {@code previous}
-                 */
-                setDelegate(getDelegate().update(index, value));
+                checkDirty();
+                // may throw a ClassCastException accordingly to j.u.ListIterator.set(T)
+                list.set(index, value);
             }
 
             @Override
             public void add(T value) {
                 /* TODO:
-                 * @throws ClassCastException if the class of the specified element
-                 *         prevents it from being added to this list
-                 * @throws IllegalArgumentException if some aspect of this element
-                 *         prevents it from being added to this list
+                 * The new element is inserted before the implicit
+                 * cursor: a subsequent call to {@code next} would be unaffected, and a
+                 * subsequent call to {@code previous} would return the new element.
+                 * (This call increases by one the value that would be returned by a
+                 * call to {@code nextIndex} or {@code previousIndex}.)
                  */
-                setDelegate(getDelegate().insert(index, value));
+                // may throw a ClassCastException accordingly to j.u.ListIterator.add(T)
+                list.add(index, value);
+                dirty = true;
+            }
+
+            private void checkDirty() {
+                if (dirty) {
+                    throw new IllegalStateException();
+                }
             }
         }
     }
