@@ -204,12 +204,12 @@ class JavaConverters {
 
         @Override
         public ListIterator<T> listIterator() {
-            return ListIterator.of(getDelegate(), 0);
+            return ListIterator.of(getDelegate(), 0, isMutable());
         }
 
         @Override
         public ListIterator<T> listIterator(int index) {
-            return ListIterator.of(getDelegate(), index);
+            return ListIterator.of(getDelegate(), index, isMutable());
         }
 
         @Override
@@ -261,9 +261,24 @@ class JavaConverters {
             return getDelegate().toJavaArray();
         }
 
+        @SuppressWarnings("unchecked")
         @Override
-        public <T1> T1[] toArray(T1[] array) {
-            return getDelegate().toJavaList().toArray(array);
+        public <U> U[] toArray(U[] array) {
+            final U[] target;
+            final int length = getDelegate().length();
+            if (array.length < length) {
+                final Class<? extends Object[]> newType = array.getClass();
+                target = (newType == Object[].class)
+                         ? (U[]) new Object[length]
+                         : (U[]) java.lang.reflect.Array.newInstance(newType.getComponentType(), length);
+            } else {
+                target = array;
+            }
+            final Iterator<T> iter = iterator();
+            for (int i = 0; i < length; i++) {
+                target[i] = (U) iter.next();
+            }
+            return target;
         }
 
         // -- Object.*
@@ -292,8 +307,7 @@ class JavaConverters {
         // -- private helpers
 
         private boolean setDelegateAndCheckChanged(Seq<T> delegate) {
-            // TODO: or `return previousDelegate != delegate`?
-            return setDelegate(delegate).size() != delegate.size();
+            return setDelegate(delegate) != delegate;
         }
 
         private T setDelegateAndGetPreviousElement(int index, Seq<T> delegate) {
@@ -306,13 +320,13 @@ class JavaConverters {
 
             private int index;
 
-            static <T> ListIterator<T> of(Seq<T> seq, int index) {
+            static <T> ListIterator<T> of(Seq<T> seq, int index, boolean mutable) {
                 final IndexedSeq<T> indexedSeq = (seq instanceof IndexedSeq) ? (IndexedSeq<T>) seq : seq.toVector();
-                return new ListIterator<>(indexedSeq, index);
+                return new ListIterator<>(indexedSeq, index, mutable);
             }
 
-            ListIterator(IndexedSeq<T> delegate, int index) {
-                super(delegate, true); // TODO: always mutable?
+            ListIterator(IndexedSeq<T> delegate, int index, boolean mutable) {
+                super(delegate, mutable);
                 this.index = index;
             }
 
