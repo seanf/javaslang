@@ -5,6 +5,10 @@
  */
 package javaslang.collection;
 
+import javaslang.Function1;
+import javaslang.Tuple;
+import javaslang.Tuple2;
+
 import java.io.Serializable;
 import java.util.Collection;
 import java.util.Iterator;
@@ -92,7 +96,7 @@ class JavaConverters {
      *
      * @param <C> The Javaslang collection type
      */
-    private static abstract class HasDelegate<C extends Traversable<?>> implements Serializable {
+    private static abstract class HasDelegate<C extends Traversable<T>, T> implements Serializable {
 
         private static final long serialVersionUID = 1L;
 
@@ -112,18 +116,34 @@ class JavaConverters {
             return delegate;
         }
 
-        C setDelegate(C newDelegate) {
+        // if mutable, applies f, which takes the old delegate and returns a modified delegate
+        boolean swapDelegate(Function1<C, C> f) {
             if (mutable) {
-                final C previousDelegate = delegate;
-                delegate = newDelegate;
-                return previousDelegate;
+                C newDelegate = f.apply(delegate);
+                if (newDelegate != delegate) {
+                    delegate = newDelegate;
+                    return true;
+                } else {
+                    return false;
+                }
+            } else {
+                throw new UnsupportedOperationException();
+            }
+        }
+
+        // if mutable, applies f, which takes the old delegate, returns modified delegate and an element
+        T swapDelegateAndGetElement(Function1<C, Tuple2<C, T>> f) {
+            if (mutable) {
+                Tuple2<C, T> newDelegateAndOldElement = f.apply(delegate);
+                delegate = newDelegateAndOldElement._1;
+                return newDelegateAndOldElement._2;
             } else {
                 throw new UnsupportedOperationException();
             }
         }
     }
 
-    private static class ListView<T> extends HasDelegate<Seq<T>> implements java.util.List<T> {
+    private static class ListView<T> extends HasDelegate<Seq<T>, T> implements java.util.List<T> {
 
         private static final long serialVersionUID = 1L;
 
@@ -133,29 +153,29 @@ class JavaConverters {
 
         @Override
         public boolean add(T element) {
-            return setDelegateAndCheckChanged(getDelegate().append(element));
+            return swapDelegate(old -> old.append(element));
         }
 
         @Override
         public void add(int index, T element) {
             // may throw an IndexOutOfBoundsException accordingly to the j.u.List.add(int, T)
-            setDelegate(getDelegate().insert(index, element));
+            swapDelegate(old -> old.insert(index, element));
         }
 
         @Override
         public boolean addAll(Collection<? extends T> collection) {
-            return setDelegateAndCheckChanged(getDelegate().appendAll(collection));
+            return swapDelegate(old -> old.appendAll(collection));
         }
 
         @Override
         public boolean addAll(int index, Collection<? extends T> collection) {
             // may throw an IndexOutOfBoundsException accordingly to the j.u.List.addAll(int, Collection)
-            return setDelegateAndCheckChanged(getDelegate().insertAll(index, collection));
+            return swapDelegate(old -> old.insertAll(index, collection));
         }
 
         @Override
         public void clear() {
-            setDelegate(getDelegate().take(0));
+            swapDelegate(old -> old.take(0));
         }
 
         @Override
@@ -214,35 +234,45 @@ class JavaConverters {
 
         @Override
         public T remove(int index) {
-            // may throw an IndexOutOfBoundsException accordingly to the j.u.List.remove(int)
-            return setDelegateAndGetPreviousElement(index, getDelegate().removeAt(index));
+            return swapDelegateAndGetElement(old -> {
+                // may throw an IndexOutOfBoundsException according to j.u.List.remove(int)
+                Seq<T> newDelegate = old.removeAt(index);
+                return Tuple.of(newDelegate, old.get(index));
+            });
         }
 
         @Override
         public boolean remove(Object obj) {
             // may throw a ClassCastException accordingly to the j.u.List.remove(Object)
             @SuppressWarnings("unchecked") final T that = (T) obj;
-            return setDelegateAndCheckChanged(getDelegate().remove(that));
+            return swapDelegate(old -> old.remove(that));
         }
 
         @Override
         public boolean removeAll(Collection<?> collection) {
-            // may throw a ClassCastException accordingly to the j.u.List.removeAll(Collection)
-            @SuppressWarnings("unchecked") final Collection<T> that = (Collection<T>) collection;
-            return setDelegateAndCheckChanged(getDelegate().removeAll(that));
+            return swapDelegate(old -> {
+                // may throw a ClassCastException according to j.u.List.removeAll(Collection)
+                @SuppressWarnings("unchecked") final Collection<T> that = (Collection<T>) collection;
+                return old.removeAll(that);
+            });
         }
 
         @Override
         public boolean retainAll(Collection<?> collection) {
-            // may throw a ClassCastException accordingly to j.u.List.retainAll(Collection)
-            @SuppressWarnings("unchecked") final Collection<T> that = (Collection<T>) collection;
-            return setDelegateAndCheckChanged(getDelegate().retainAll(that));
+            return swapDelegate(old -> {
+                // may throw a ClassCastException according to j.u.List.retainAll(Collection)
+                @SuppressWarnings("unchecked") final Collection<T> that = (Collection<T>) collection;
+                return old.retainAll(that);
+            });
         }
 
         @Override
         public T set(int index, T element) {
-            // may throw an IndexOutOfBoundsException accordingly to the j.u.List.set(int, T)
-            return setDelegateAndGetPreviousElement(index, getDelegate().update(index, element));
+            return swapDelegateAndGetElement(old -> {
+                // may throw an IndexOutOfBoundsException according to j.u.List.set(int, T)
+                Seq<T> newDelegate = old.update(index, element);
+                return Tuple.of(newDelegate, old.get(index));
+            });
         }
 
         @Override
@@ -302,16 +332,6 @@ class JavaConverters {
         @Override
         public String toString() {
             return getDelegate().mkString("[", ", ", "]");
-        }
-
-        // -- private helpers
-
-        private boolean setDelegateAndCheckChanged(Seq<T> delegate) {
-            return setDelegate(delegate) != delegate;
-        }
-
-        private T setDelegateAndGetPreviousElement(int index, Seq<T> delegate) {
-            return setDelegate(delegate).get(index);
         }
 
         // DEV-Note: An iterator is intentionally not serializable.
@@ -401,7 +421,7 @@ class JavaConverters {
         }
     }
 
-    private static abstract class SetView<T> extends HasDelegate<Set<T>> implements java.util.Set<T> {
+    private static abstract class SetView<T> extends HasDelegate<Set<T>, T> implements java.util.Set<T> {
 
         private static final long serialVersionUID = 1L;
 
@@ -412,7 +432,7 @@ class JavaConverters {
         // TODO
     }
 
-    private static abstract class NavigableSetView<T> extends HasDelegate<SortedSet<T>> implements java.util.NavigableSet<T> {
+    private static abstract class NavigableSetView<T> extends HasDelegate<SortedSet<T>, T> implements java.util.NavigableSet<T> {
 
         private static final long serialVersionUID = 1L;
 
@@ -423,7 +443,7 @@ class JavaConverters {
         // TODO
     }
 
-    private static abstract class MapView<K, V> extends HasDelegate<Map<K, V>> implements java.util.Map<K, V> {
+    private static abstract class MapView<K, V> extends HasDelegate<Map<K, V>, Tuple2<K, V>> implements java.util.Map<K, V> {
 
         private static final long serialVersionUID = 1L;
 
@@ -434,7 +454,7 @@ class JavaConverters {
         // TODO
     }
 
-    private static abstract class NavigableMapView<K, V> extends HasDelegate<SortedMap<K, V>> implements java.util.NavigableMap<K, V> {
+    private static abstract class NavigableMapView<K, V> extends HasDelegate<SortedMap<K, V>, Tuple2<K, V>> implements java.util.NavigableMap<K, V> {
 
         private static final long serialVersionUID = 1L;
 
